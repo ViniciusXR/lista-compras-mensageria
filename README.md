@@ -203,13 +203,13 @@ npm run demo:checkout
          │       │
     ┌────┘       └────┐
     ▼                 ▼
-┌────────────┐   ┌────────────┐
+┌─────────────┐   ┌────────────┐
 │ Notification│   │ Analytics  │
 │  Consumer   │   │  Consumer  │
 │             │   │            │
-│• Email📧    │   │• Stats📊  │
+│• Email      │   │• Stats     │
 │• SMS        │   │• Dashboard │
-└─────────────┘  └────────────┘
+└─────────────┘   └────────────┘
 ```
 
 ### Características Principais
@@ -230,7 +230,6 @@ lista-compras-mensageria/
 ├── demo-checkout.js          # Demo de checkout com mensageria
 ├── start-all.ps1             # Script PowerShell
 ├── .env                      # Variáveis de ambiente (CloudAMQP URL)
-├── .env.example              # Template de configuração
 │
 ├── shared/                   # Código compartilhado
 │   ├── JsonDatabase.js       # Banco NoSQL em JSON
