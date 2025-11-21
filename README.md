@@ -14,13 +14,13 @@ Sistema distribuído para gerenciamento de listas de compras utilizando arquitet
 - [Mensageria RabbitMQ](#-mensageria-rabbitmq-novo)
 - [Arquitetura](#-arquitetura)
 - [Estrutura do Projeto](#-estrutura-do-projeto)
-- [Funcionalidades](#-funcionalidades-implementadas)
-- [API - Endpoints](#-endpoints-da-api)
-- [Segurança](#-segurança)
-- [Service Discovery & Circuit Breaker](#-service-discovery--circuit-breaker)
+- [Funcionalidades](#-funcionalidades-por-serviço)
+- [Principais Endpoints](#-principais-endpoints)
+- [Screenshots](#-screenshots)
 - [Testando o Sistema](#-testando-o-sistema)
 - [Troubleshooting](#-troubleshooting)
 - [Tecnologias](#-tecnologias-utilizadas)
+- [Requisitos Atendidos](#-requisitos-atendidos)
 
 ---
 
@@ -312,6 +312,13 @@ lista-compras-mensageria/
 
 ### Monitoramento
 - `GET /health` - Status dos serviços
+
+---
+
+## 📸 Screenshots
+
+### Em Breve
+> Screenshots do sistema em funcionamento serão adicionados aqui.
 
 ---
 
