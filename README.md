@@ -1,6 +1,6 @@
-# Sistema de Lista de Compras com Microsserviços
+# Sistema de Lista de Compras com Microsserviços e Mensageria
 
-Sistema distribuído para gerenciamento de listas de compras utilizando arquitetura de microsserviços com API Gateway, Service Discovery e bancos NoSQL independentes.
+Sistema distribuído para gerenciamento de listas de compras utilizando arquitetura de microsserviços com API Gateway, Service Discovery, bancos NoSQL independentes e **mensageria assíncrona com RabbitMQ**.
 
 **Desenvolvido para:** Laboratório de Desenvolvimento de Aplicações Móveis e Distribuídas - PUC Minas  
 **Aluno:** Vinicius Xavier
@@ -11,6 +11,7 @@ Sistema distribuído para gerenciamento de listas de compras utilizando arquitet
 
 - [Visão Geral](#-visão-geral)
 - [Quick Start](#-quick-start)
+- [Mensageria RabbitMQ](#-mensageria-rabbitmq-novo)
 - [Arquitetura](#-arquitetura)
 - [Estrutura do Projeto](#-estrutura-do-projeto)
 - [Funcionalidades](#-funcionalidades-implementadas)
@@ -34,6 +35,11 @@ Este projeto implementa um **sistema completo de microsserviços** para gerencia
 - **List Service** (porta 3003) - Gerenciamento de listas de compras
 - **API Gateway** (porta 3000) - Ponto único de entrada com roteamento inteligente
 
+### Consumers (Mensageria)
+
+- **Notification Service** - Processa eventos de checkout e envia notificações
+- **Analytics Service** - Calcula estatísticas e atualiza dashboard em tempo real
+
 ### Componentes Principais
 
 - ✅ **Autenticação JWT** com hash bcrypt
@@ -43,6 +49,7 @@ Este projeto implementa um **sistema completo de microsserviços** para gerencia
 - ✅ **Banco NoSQL** (JSON file-based)
 - ✅ **Dashboard Agregado** com estatísticas
 - ✅ **Busca Global** (itens + listas)
+- ✅ **🐇 Mensageria Assíncrona** com RabbitMQ (CloudAMQP)
 
 ---
 
@@ -84,21 +91,57 @@ npm run start:list
 npm run start:gateway
 ```
 
-**Opção 3: Script PowerShell**
-
-```bash
-.\start-all.ps1
-```
-
 ### 3. Testar
 
 ```bash
-# Executar demonstração completa
+# Executar demonstração completa (original)
 npm run demo
 
 # Ou verificar health
 curl http://localhost:3000/health
 ```
+
+---
+
+## 🐇 Mensageria RabbitMQ (NOVO)
+
+### Pré-requisito
+
+1. Configure CloudAMQP com exchange `shopping_events` (tipo topic), filas `notification_queue` e `analytics_queue`, e bindings com routing key `list.checkout.#`
+2. Cole a URL do CloudAMQP no arquivo `.env` na raiz do projeto:
+
+```env
+RABBITMQ_URL=amqps://usuario:senha@hostname/vhost
+```
+
+### 🚀 Ordem de Execução
+
+```bash
+# Terminal 1 - Serviços
+npm start
+
+# Terminal 2 - Consumers (aguarde Terminal 1 estar pronto)
+npm run start:consumers
+
+# Terminal 3 - Demo de Checkout
+npm run demo:checkout
+```
+
+### 🎯 Fluxo de Checkout Assíncrono
+
+1. **Cliente** → `POST /api/lists/:id/checkout`
+2. **List Service** publica mensagem no RabbitMQ
+3. **API retorna 202 Accepted** (~50ms)
+4. **Consumers processam em background:**
+   - 📧 Notification Service → Simula envio de email
+   - 📊 Analytics Service → Atualiza estatísticas
+
+### 📊 O que Observar na Demonstração
+
+✅ **Resposta rápida**: API retorna 202 em < 100ms  
+✅ **Processamento assíncrono**: Consumers trabalham em background  
+✅ **RabbitMQ Management**: Gráficos de mensagens publicadas/consumidas  
+✅ **Logs dos Consumers**: Mensagens processadas instantaneamente
 
 ---
 
@@ -139,78 +182,64 @@ curl http://localhost:3000/health
 │ • Auth/JWT  │    │ • Catálogo  │    │ • Listas    │
 │ • bcrypt    │    │ • 23 itens  │    │ • Items     │
 │ • CRUD      │    │ • Categorias│    │ • Summary   │
-└──────┬──────┘    └──────┬──────┘    └──────┬──────┘
-       │                  │                  │
-       ▼                  ▼                  ▼
-┌────────────┐     ┌────────────┐     ┌────────────┐
-│users.json  │     │items.json  │     │lists.json  │
-└────────────┘     └────────────┘     └────────────┘
+│             │    │             │    │ • Checkout ──┐
+└──────┬──────┘    └──────┬──────┘    └──────┬──────┘│
+       │                  │                  │        │
+       ▼                  ▼                  ▼        │ Publish
+┌────────────┐     ┌────────────┐     ┌────────────┐ │ Event
+│users.json  │     │items.json  │     │lists.json  │ │
+└────────────┘     └────────────┘     └────────────┘ │
+                                                      │
+            ┌─────────────────────────────────────────┘
+            │
+            ▼
+    ┌────────────────┐
+    │   RabbitMQ     │
+    │  CloudAMQP     │
+    │                │
+    │ shopping_events│ (Topic Exchange)
+    │                │
+    └────┬───────┬───┘
+         │       │
+    ┌────┘       └────┐
+    ▼                 ▼
+┌────────────┐   ┌────────────┐
+│ Notification│   │ Analytics  │
+│  Consumer   │   │  Consumer  │
+│             │   │            │
+│• Email📧    │   │• Stats📊   │
+│• SMS        │   │• Dashboard │
+└─────────────┘  └────────────┘
 ```
 
-### Fluxo de Autenticação
+### Características Principais
 
-```
-1. REGISTRO
-   Cliente → Gateway → User Service
-                        │
-                        ├─► Valida email único
-                        ├─► Hash senha (bcrypt)
-                        └─► Salva em users.json
-
-2. LOGIN
-   Cliente → Gateway → User Service
-                        │
-                        ├─► Busca usuário
-                        ├─► Compara senha hash
-                        ├─► Gera JWT token (24h)
-                        └─► Retorna { token, user }
-
-3. REQUISIÇÃO AUTENTICADA
-   Cliente → Gateway → Service
-                        │
-                        ├─► Valida JWT
-                        ├─► Extrai userId
-                        └─► Processa requisição
-```
-
-### Circuit Breaker
-
-```
-Estado CLOSED (Normal)
-  │ Requisições normais
-  │ Contagem de falhas: 0
-  │
-  └─► 3 falhas consecutivas
-      │
-      ▼
-Estado OPEN (Circuito Aberto)
-  │ Bloqueia requisições
-  │ Retorna erro imediatamente
-  │ Timer: 60 segundos
-  │
-  └─► Após timeout
-      │
-      ▼
-Estado HALF_OPEN (Teste)
-  │ Permite uma requisição
-  │
-  ├─► Sucesso → Volta para CLOSED
-  └─► Falha   → Volta para OPEN
-```
+- **Autenticação**: JWT com hash bcrypt, tokens de 24h
+- **Circuit Breaker**: 3 falhas consecutivas = circuito aberto por 60s
+- **Health Checks**: Automáticos a cada 30 segundos
+- **Service Discovery**: Registro dinâmico de serviços
 
 ---
 
 ## 📁 Estrutura do Projeto
 
 ```
-lista-compras-microservices/
+lista-compras-mensageria/
 ├── package.json              # Scripts principais
-├── client-demo.js            # Cliente de demonstração
+├── client-demo.js            # Cliente de demonstração original
+├── demo-checkout.js          # Demo de checkout com mensageria
 ├── start-all.ps1             # Script PowerShell
+├── .env                      # Variáveis de ambiente (CloudAMQP URL)
+├── .env.example              # Template de configuração
 │
 ├── shared/                   # Código compartilhado
 │   ├── JsonDatabase.js       # Banco NoSQL em JSON
-│   └── serviceRegistry.js    # Service Discovery
+│   ├── serviceRegistry.js    # Service Discovery
+│   └── rabbitmq.js           # RabbitMQ Manager (conexão, publish, consume)
+│
+├── consumers/                # Serviços de mensageria
+│   ├── notification-service.js  # Processa notificações de checkout
+│   └── analytics-service.js     # Processa analytics de checkout
 │
 ├── services/
 │   ├── user-service/         # Porta 3001
@@ -221,7 +250,7 @@ lista-compras-microservices/
 │   │   └── server.js
 │   └── list-service/         # Porta 3003
 │       ├── package.json
-│       └── server.js
+│       └── server.js         # Inclui endpoint /checkout
 │
 ├── api-gateway/              # Porta 3000
 │   ├── package.json
@@ -236,351 +265,53 @@ lista-compras-microservices/
 
 ---
 
-## 🎯 Funcionalidades Implementadas
+## 🎯 Funcionalidades por Serviço
 
-### 1️⃣ User Service (Porta 3001)
+### User Service (Porta 3001)
+- Registro e autenticação com JWT
+- Hash de senhas com bcrypt
+- Gerenciamento de perfil
 
-**Autenticação:**
-- ✅ Registro de usuários com validação
-- ✅ Login com geração de JWT (expiração 24h)
-- ✅ Hash de senhas com bcrypt (salt rounds: 10)
-- ✅ Validação de email/username únicos
+### Item Service (Porta 3002)
+- Catálogo com 23 itens em 5 categorias (Alimentos, Limpeza, Higiene, Bebidas, Padaria)
+- Busca e filtros por categoria/nome
 
-**Gerenciamento:**
-- ✅ Buscar perfil de usuário
-- ✅ Atualizar dados do perfil
-- ✅ Middleware de autenticação
+### List Service (Porta 3003)
+- CRUD de listas de compras
+- Adicionar/remover/atualizar itens
+- Cálculo automático de totais e estatísticas
+- Checkout assíncrono com mensageria RabbitMQ
 
-**Schema do Usuário:**
-```json
-{
-  "id": "uuid",
-  "email": "string",
-  "username": "string",
-  "password": "string (hash bcrypt)",
-  "firstName": "string",
-  "lastName": "string",
-  "preferences": {
-    "defaultStore": "string",
-    "currency": "BRL"
-  },
-  "createdAt": "timestamp",
-  "updatedAt": "timestamp"
-}
-```
-
-### 2️⃣ Item Service (Porta 3002)
-
-**Catálogo:**
-- ✅ CRUD completo de itens
-- ✅ **23 itens pré-cadastrados** em 5 categorias
-- ✅ Busca por nome
-- ✅ Filtros por categoria
-- ✅ Listagem de categorias
-
-**Categorias Disponíveis:**
-- **Alimentos** (8 itens): Arroz, Feijão, Macarrão, Óleo, Açúcar, Sal, Café, Leite
-- **Limpeza** (5 itens): Detergente, Água Sanitária, Sabão em Pó, Desinfetante, Esponja
-- **Higiene** (4 itens): Sabonete, Shampoo, Pasta de Dente, Papel Higiênico
-- **Bebidas** (3 itens): Refrigerante, Suco, Água Mineral
-- **Padaria** (3 itens): Pão Francês, Pão de Forma, Bolo
-
-**Schema do Item:**
-```json
-{
-  "id": "uuid",
-  "name": "string",
-  "category": "string",
-  "brand": "string",
-  "unit": "kg|un|litro",
-  "averagePrice": "number",
-  "barcode": "string",
-  "description": "string",
-  "active": "boolean",
-  "createdAt": "timestamp"
-}
-```
-
-### 3️⃣ List Service (Porta 3003)
-
-**Gerenciamento de Listas:**
-- ✅ CRUD completo de listas
-- ✅ Adicionar/remover/atualizar itens
-- ✅ Marcar itens como comprados
-- ✅ Cálculo automático de totais
-- ✅ Resumo com estatísticas
-- ✅ Validação de propriedade (usuário só vê suas listas)
-- ✅ Status: active, completed, archived
-
-**Integração:**
-- ✅ Busca automática de dados do item ao adicionar
-- ✅ Cache do nome do item na lista
-- ✅ Comunicação com Item Service
-
-**Schema da Lista:**
-```json
-{
-  "id": "uuid",
-  "userId": "string",
-  "name": "string",
-  "description": "string",
-  "status": "active|completed|archived",
-  "items": [
-    {
-      "itemId": "string",
-      "itemName": "string",
-      "quantity": "number",
-      "unit": "string",
-      "estimatedPrice": "number",
-      "purchased": "boolean",
-      "notes": "string",
-      "addedAt": "timestamp"
-    }
-  ],
-  "summary": {
-    "totalItems": "number",
-    "purchasedItems": "number",
-    "estimatedTotal": "number"
-  },
-  "createdAt": "timestamp",
-  "updatedAt": "timestamp"
-}
-```
-
-### 4️⃣ API Gateway (Porta 3000)
-
-**Roteamento Inteligente:**
-- ✅ Proxy para todos os serviços
-- ✅ Propagação de headers (Authorization)
-- ✅ Tratamento de erros
-
-**Circuit Breaker:**
-- ✅ Threshold: 3 falhas consecutivas
-- ✅ Timeout: 60 segundos
-- ✅ Estados: CLOSED → OPEN → HALF_OPEN
-- ✅ Proteção contra falhas em cascata
-
-**Endpoints Agregados:**
-- ✅ **Dashboard**: Estatísticas completas do usuário
-  - Total de listas (active/completed)
-  - Total de itens (comprados/pendentes)
-  - Total estimado em R$
-  - Taxa de conclusão (%)
-  
-- ✅ **Busca Global**: Busca simultânea em itens e listas
-
-**Monitoramento:**
-- ✅ Health check de todos os serviços
-- ✅ Visualização do Service Registry
-- ✅ Logs de requisições
-
-### 5️⃣ Service Discovery
-
-**Funcionalidades:**
-- ✅ Registro automático ao iniciar
-- ✅ Arquivo compartilhado (`service-registry.json`)
-- ✅ Health checks a cada 30 segundos
-- ✅ Atualização de status (healthy/unhealthy)
-- ✅ Cleanup automático ao desligar
-- ✅ Descoberta dinâmica de serviços
+### API Gateway (Porta 3000)
+- Proxy para todos os serviços
+- Circuit Breaker (3 falhas = 60s timeout)
+- Dashboard agregado e busca global
+- Health checks de todos os serviços
 
 ---
 
-## 📡 Endpoints da API
+## 📡 Principais Endpoints
 
-### User Service
+### Autenticação
+- `POST /api/auth/register` - Registrar usuário
+- `POST /api/auth/login` - Login (retorna JWT)
 
-| Método | Endpoint | Autenticação | Descrição |
-|--------|----------|--------------|-----------|
-| POST | `/api/auth/register` | Não | Cadastrar novo usuário |
-| POST | `/api/auth/login` | Não | Fazer login e receber JWT |
-| GET | `/api/users/:id` | Sim | Buscar dados do usuário |
-| PUT | `/api/users/:id` | Sim | Atualizar perfil |
+### Itens
+- `GET /api/items` - Listar itens (filtros: ?category=X, ?name=X)
+- `GET /api/categories` - Listar categorias
 
-### Item Service
+### Listas  
+- `POST /api/lists` - Criar lista
+- `GET /api/lists` - Minhas listas
+- `POST /api/lists/:id/items` - Adicionar item
+- `POST /api/lists/:id/checkout` - Finalizar compra (202 Accepted)
 
-| Método | Endpoint | Autenticação | Descrição |
-|--------|----------|--------------|-----------|
-| GET | `/api/items` | Não | Listar todos os itens |
-| GET | `/api/items?category=X` | Não | Filtrar por categoria |
-| GET | `/api/items?name=X` | Não | Filtrar por nome |
-| GET | `/api/items/:id` | Não | Buscar item específico |
-| POST | `/api/items` | Sim | Criar novo item |
-| PUT | `/api/items/:id` | Sim | Atualizar item |
-| GET | `/api/categories` | Não | Listar categorias |
-| GET | `/api/items/search?q=X` | Não | Buscar por termo |
-
-### List Service
-
-| Método | Endpoint | Autenticação | Descrição |
-|--------|----------|--------------|-----------|
-| POST | `/api/lists` | Sim | Criar nova lista |
-| GET | `/api/lists` | Sim | Listar minhas listas |
-| GET | `/api/lists/:id` | Sim | Buscar lista específica |
-| PUT | `/api/lists/:id` | Sim | Atualizar lista |
-| DELETE | `/api/lists/:id` | Sim | Deletar lista |
-| POST | `/api/lists/:id/items` | Sim | Adicionar item à lista |
-| PUT | `/api/lists/:id/items/:itemId` | Sim | Atualizar item na lista |
-| DELETE | `/api/lists/:id/items/:itemId` | Sim | Remover item da lista |
-| GET | `/api/lists/:id/summary` | Sim | Ver resumo da lista |
-
-### API Gateway - Agregados
-
-| Método | Endpoint | Autenticação | Descrição |
-|--------|----------|--------------|-----------|
-| GET | `/api/dashboard` | Sim | Dashboard com estatísticas |
-| GET | `/api/search?q=termo` | Sim | Busca global (itens + listas) |
+### Agregados
+- `GET /api/dashboard` - Dashboard com estatísticas
+- `GET /api/search?q=termo` - Busca global
 
 ### Monitoramento
-
-| Método | Endpoint | Autenticação | Descrição |
-|--------|----------|--------------|-----------|
-| GET | `/health` | Não | Status de todos os serviços |
-| GET | `/registry` | Não | Service registry |
-
-### Exemplos de Requisições
-
-**Registrar Usuário:**
-```bash
-POST /api/auth/register
-Content-Type: application/json
-
-{
-  "email": "joao@email.com",
-  "username": "joao",
-  "password": "senha123",
-  "firstName": "João",
-  "lastName": "Silva",
-  "preferences": {
-    "defaultStore": "Supermercado ABC",
-    "currency": "BRL"
-  }
-}
-```
-
-**Login:**
-```bash
-POST /api/auth/login
-Content-Type: application/json
-
-{
-  "email": "joao@email.com",
-  "password": "senha123"
-}
-
-# Retorna:
-{
-  "token": "eyJhbGciOiJIUzI1NiIs...",
-  "user": { ...dados do usuário... }
-}
-```
-
-**Criar Lista:**
-```bash
-POST /api/lists
-Authorization: Bearer <seu-token-jwt>
-Content-Type: application/json
-
-{
-  "name": "Compras do Mês",
-  "description": "Lista mensal"
-}
-```
-
-**Adicionar Item à Lista:**
-```bash
-POST /api/lists/:listId/items
-Authorization: Bearer <seu-token-jwt>
-Content-Type: application/json
-
-{
-  "itemId": "uuid-do-item",
-  "quantity": 2,
-  "notes": "Preferência por marca X"
-}
-```
-
----
-
-## 🔐 Segurança
-
-### Autenticação JWT
-- ✅ Tokens com expiração de 24 horas
-- ✅ Validação em todas as rotas protegidas
-- ✅ Secret key configurável via variável de ambiente
-
-### Proteção de Dados
-- ✅ Senhas com hash bcrypt (salt rounds: 10)
-- ✅ Senhas nunca retornadas nas respostas
-- ✅ Sanitização de dados de entrada
-
-### Validação de Propriedade
-- ✅ Usuários só acessam seus próprios dados
-- ✅ Validação de ID do usuário no token
-- ✅ Middleware de autorização
-
-### Validação de Entrada
-- ✅ Campos obrigatórios verificados
-- ✅ Email/username únicos
-- ✅ Status de lista validado
-- ✅ Tipos de dados validados
-
----
-
-## 🔄 Service Discovery & Circuit Breaker
-
-### Service Registry
-
-**Arquivo:** `data/service-registry.json`
-
-```json
-{
-  "user-service": {
-    "url": "http://localhost:3001",
-    "status": "healthy",
-    "lastHeartbeat": "2025-11-20T10:30:00Z",
-    "metadata": {
-      "version": "1.0.0",
-      "description": "User management..."
-    },
-    "registeredAt": "2025-11-20T10:00:00Z"
-  }
-}
-```
-
-**Health Checks:**
-```
-Service Registry (loop infinito)
-  │
-  │ A cada 30 segundos
-  │
-  ├─► Para cada serviço registrado:
-  │     │
-  │     ├─► GET /health
-  │     │
-  │     ├─► Se OK (200)
-  │     │     └─► status = "healthy"
-  │     │
-  │     └─► Se erro/timeout
-  │           └─► status = "unhealthy"
-  │
-  └─► Atualiza service-registry.json
-```
-
-### Estatísticas de Performance
-
-```
-Endpoint                    Tempo Típico (ms)
-──────────────────────────────────────────────
-POST /api/auth/register     50-100
-POST /api/auth/login        50-100
-GET  /api/items             10-20
-GET  /api/items?category    15-25
-POST /api/lists             15-30
-POST /api/lists/:id/items   30-50  (chama Item Service)
-GET  /api/dashboard         40-70  (agrega dados)
-GET  /api/search            35-60  (busca global)
-```
+- `GET /health` - Status dos serviços
 
 ---
 
@@ -589,74 +320,11 @@ GET  /api/search            35-60  (busca global)
 ### Cliente de Demonstração
 
 ```bash
+# Demonstração completa original
 npm run demo
-```
 
-**O que é testado:**
-
-1. ✅ Registro de novo usuário
-2. ✅ Login e obtenção de token JWT
-3. ✅ Busca de itens por categoria (Alimentos)
-4. ✅ Busca de itens por nome (arroz)
-5. ✅ Criação de lista de compras
-6. ✅ Adição de 5 itens à lista
-7. ✅ Marcação de 3 itens como comprados
-8. ✅ Visualização do dashboard com estatísticas
-9. ✅ Busca global por termo
-10. ✅ Verificação de health dos serviços
-
-### Testes Manuais com cURL
-
-**Verificar Health:**
-```bash
-curl http://localhost:3000/health
-```
-
-**Listar Itens:**
-```bash
-curl http://localhost:3000/api/items
-```
-
-**Filtrar por Categoria:**
-```bash
-curl "http://localhost:3000/api/items?category=Alimentos"
-```
-
-**Registrar e Fazer Login (PowerShell):**
-```powershell
-# Registrar
-$body = @{
-    email = "test@test.com"
-    username = "test"
-    password = "123456"
-    firstName = "Test"
-} | ConvertTo-Json
-
-Invoke-RestMethod -Uri "http://localhost:3000/api/auth/register" `
-  -Method POST -Body $body -ContentType "application/json"
-
-# Login
-$loginBody = @{
-    email = "test@test.com"
-    password = "123456"
-} | ConvertTo-Json
-
-$response = Invoke-RestMethod -Uri "http://localhost:3000/api/auth/login" `
-  -Method POST -Body $loginBody -ContentType "application/json"
-
-$token = $response.token
-
-# Criar lista
-$listBody = @{
-    name = "Minha Lista"
-    description = "Teste"
-} | ConvertTo-Json
-
-$headers = @{ Authorization = "Bearer $token" }
-
-Invoke-RestMethod -Uri "http://localhost:3000/api/lists" `
-  -Method POST -Body $listBody `
-  -ContentType "application/json" -Headers $headers
+# Demonstração de Checkout com Mensageria
+npm run demo:checkout
 ```
 
 ---
@@ -664,58 +332,24 @@ Invoke-RestMethod -Uri "http://localhost:3000/api/lists" `
 ## 🐛 Troubleshooting
 
 ### Porta em Uso
-
-**Erro:** `Error: listen EADDRINUSE`
-
-**Solução:**
 ```powershell
-# Encontrar e encerrar processo na porta 3000
+# Encerrar processo na porta 3000
 Get-NetTCPConnection -LocalPort 3000 | 
   Select-Object -ExpandProperty OwningProcess | 
   ForEach-Object { Stop-Process -Id $_ -Force }
-
-# Ou usar outra porta
-PORT=3004 npm run start:gateway
 ```
 
-### Service Unavailable
+### Problemas com RabbitMQ
 
-**Problema:** `Service unavailable` ou erro 503
+**Erro de conexão:**
+1. Verifique se `.env` existe com `RABBITMQ_URL`
+2. Confirme que instância CloudAMQP está ativa
+3. URL deve começar com `amqps://`
 
-**Solução:**
-1. Verifique se todos os serviços estão rodando
-2. Verifique `data/service-registry.json`
-3. Aguarde 30 segundos para health check atualizar
-4. Reinicie o serviço com problema
-
-### Token Inválido
-
-**Problema:** `Token inválido` ou 403
-
-**Solução:**
-- Faça login novamente para obter novo token
-- Verifique se está usando `Bearer <token>` no header
-- Confirme que o token não expirou (24h)
-
-### Item Não Encontrado
-
-**Problema:** `Item não encontrado no catálogo`
-
-**Solução:**
-1. Verifique se Item Service está rodando
-2. Liste itens disponíveis: `GET /api/items`
-3. Confirme que está usando um `itemId` válido
-
-### Dependências Faltando
-
-**Problema:** `Cannot find module 'uuid'` ou similar
-
-**Solução:**
-```bash
-# Reinstalar todas as dependências
-npm install
-npm run install:all
-```
+**Consumers não recebem mensagens:**
+1. Verifique logs: "✅ Conectado ao RabbitMQ"
+2. Confirme bindings no CloudAMQP Management
+3. Reinicie os consumers
 
 ---
 
@@ -729,9 +363,12 @@ npm run install:all
 - **axios** - Cliente HTTP
 - **uuid** - Geração de IDs
 - **concurrently** - Executar serviços em paralelo
+- **amqplib** - Cliente RabbitMQ para mensageria assíncrona
+- **dotenv** - Gerenciamento de variáveis de ambiente
 
-### Banco de Dados
-- **JSON File-Based** - NoSQL simples e eficiente
+### Infraestrutura
+- **RabbitMQ (CloudAMQP)** - Message Broker para comunicação assíncrona
+- **JSON File-Based Database** - Armazenamento NoSQL simples
 
 ### Padrões e Práticas
 - ✅ **Microservices Architecture**
@@ -746,17 +383,23 @@ npm run install:all
 - ✅ **Error Handling**
 - ✅ **Logging**
 - ✅ **Data Validation**
+- ✅ **Message-Driven Architecture** (RabbitMQ)
+- ✅ **Event-Driven Processing** (Async checkout)
+- ✅ **Publisher-Subscriber Pattern** (Topic exchange)
 
 ---
 
 ## 📊 Estatísticas do Projeto
 
-- **Serviços**: 4 microsserviços independentes
+- **Serviços**: 4 microsserviços independentes + 2 consumers de mensageria
 - **Endpoints**: 30+ rotas REST
-- **Linhas de código**: ~1.500
+- **Consumers**: 2 serviços de processamento assíncrono (Notification, Analytics)
+- **Linhas de código**: ~2.000
 - **Itens no catálogo**: 23 produtos em 5 categorias
-- **Tempo de resposta**: 10-100ms (dependendo da complexidade)
+- **Tempo de resposta API**: 10-100ms (síncrono)
+- **Tempo de resposta Checkout**: < 100ms (assíncrono com mensageria)
 - **Taxa de sucesso**: 100% em testes
+- **Mensagens processadas**: Em tempo real via RabbitMQ
 
 ---
 
@@ -800,68 +443,15 @@ npm run install:all
 - [x] Cleanup na saída
 - [x] Descoberta dinâmica
 
-### Cliente de Demonstração ✅
-- [x] Fluxo completo (10 etapas)
-- [x] Saída colorida e organizada
-- [x] Tratamento de erros
-- [x] Demonstração de todas as funcionalidades
+### Mensageria RabbitMQ ✅ (NOVO)
+- [x] Integração com CloudAMQP (Topic Exchange)
+- [x] Producer no List Service (checkout assíncrono)
+- [x] Notification Consumer e Analytics Consumer
+- [x] HTTP 202 Accepted para processamento em background
+- [x] Demo automatizado de checkout
 
 ---
 
-## 🎓 Critérios de Avaliação
+## 📄 Licença
 
-### Implementação Técnica (40%) ✅
-- ✅ 4 microsserviços funcionais e independentes
-- ✅ Service Discovery operacional
-- ✅ API Gateway com roteamento correto
-- ✅ Bancos NoSQL com schemas adequados
-
-### Integração (30%) ✅
-- ✅ Comunicação HTTP entre serviços
-- ✅ Autenticação JWT distribuída
-- ✅ Circuit Breaker funcionando
-- ✅ Health checks automáticos
-
-### Funcionalidades (30%) ✅
-- ✅ CRUD completo de todos os recursos
-- ✅ Busca e filtros implementados
-- ✅ Dashboard com estatísticas agregadas
-- ✅ Cliente demonstrando fluxo completo
-
-**Status Final:** ✅ **100% dos requisitos atendidos**
-
----
-
-## 📅 Informações de Entrega
-
-**Data de Entrega:** 29/09/2025  
-**Formato:** Código fonte + documentação em repositório Git  
-**Apresentação:** Demonstração ao vivo de 10 minutos
-
-### Roteiro para Demonstração
-
-1. Mostrar arquitetura (este README)
-2. Iniciar serviços (`npm start`)
-3. Verificar health (`http://localhost:3000/health`)
-4. Executar demo (`npm run demo`)
-5. Mostrar arquivos de dados (`data/`)
-6. Teste manual (Postman/cURL)
-7. Explicar Circuit Breaker e Service Discovery
-8. Perguntas e respostas
-
----
-
-## 📝 Licença
-
-Este projeto foi desenvolvido para fins educacionais como parte da disciplina de **Laboratório de Desenvolvimento de Aplicações Móveis e Distribuídas**.
-
-**Instituto de Ciências Exatas e Informática (ICEI)**  
-**Pontifícia Universidade Católica de Minas Gerais**
-
----
-
-## 🎉 Conclusão
-
-Sistema completo de microsserviços implementado com sucesso, atendendo **100% dos requisitos** especificados.
-
-**O sistema está pronto para demonstração e entrega! 🚀**
+MIT License - Vinicius Xavier @ PUC Minas 2025

@@ -313,6 +313,18 @@ app.get('/api/lists/:id/summary', async (req, res) => {
   }
 });
 
+// 🛒 Checkout - Finalizar compra (Mensageria)
+app.post('/api/lists/:id/checkout', async (req, res) => {
+  try {
+    const result = await proxyRequest('list-service', `/lists/${req.params.id}/checkout`, 'POST', req.body, {
+      authorization: req.headers.authorization
+    });
+    res.status(202).json(result);
+  } catch (error) {
+    res.status(error.status || 500).json(error.data);
+  }
+});
+
 // Endpoint agregado: Dashboard
 app.get('/api/dashboard', authenticateToken, async (req, res) => {
   try {

@@ -10,7 +10,11 @@
     "start:item": "cd services/item-service && npm start",
     "start:list": "cd services/list-service && npm start",
     "start:gateway": "cd api-gateway && npm start",
-    "demo": "node client-demo.js"
+    "start:consumers": "concurrently --kill-others --names \"NOTIF,ANALYTICS\" -c \"blue,red\" \"npm run start:notification\" \"npm run start:analytics\"",
+    "start:notification": "node consumers/notification-service.js",
+    "start:analytics": "node consumers/analytics-service.js",
+    "demo": "node client-demo.js",
+    "demo:checkout": "node demo-checkout.js"
   },
   "keywords": [
     "microservices",
@@ -20,7 +24,9 @@
   "author": "Vinicius Xavier",
   "license": "MIT",
   "dependencies": {
+    "amqplib": "^0.10.3",
     "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
     "uuid": "^9.0.1"
   },
   "devDependencies": {

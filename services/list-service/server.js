@@ -1,8 +1,10 @@
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const express = require('express');
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const JsonDatabase = require('../../shared/JsonDatabase');
 const serviceRegistry = require('../../shared/serviceRegistry');
+const rabbitmq = require('../../shared/rabbitmq');
 const path = require('path');
 
 const app = express();
@@ -336,14 +338,73 @@ app.get('/lists/:id/summary', authenticateToken, (req, res) => {
   }
 });
 
+// 🛒 CHECKOUT - Finalizar compra (envia mensagem assíncrona)
+app.post('/lists/:id/checkout', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const list = db.findById(id);
+
+    if (!list) {
+      return res.status(404).json({ error: 'Lista não encontrada' });
+    }
+
+    if (list.userId !== req.user.id) {
+      return res.status(403).json({ error: 'Você não tem permissão para finalizar esta lista' });
+    }
+
+    if (list.items.length === 0) {
+      return res.status(400).json({ error: 'Lista vazia. Adicione itens antes de finalizar.' });
+    }
+
+    // Atualizar status para completed
+    const updatedList = db.update(id, { 
+      status: 'completed',
+      completedAt: new Date().toISOString()
+    });
+
+    // Publicar mensagem no RabbitMQ de forma assíncrona
+    const message = {
+      listId: updatedList.id,
+      userId: updatedList.userId,
+      listName: updatedList.name,
+      summary: updatedList.summary,
+      items: updatedList.items,
+      completedAt: updatedList.completedAt,
+      timestamp: new Date().toISOString()
+    };
+
+    // Não aguardar o publish - fire and forget
+    rabbitmq.publish('shopping_events', 'list.checkout.completed', message)
+      .catch(err => console.error('Erro ao publicar no RabbitMQ:', err.message));
+
+    // Retornar resposta imediatamente (202 Accepted)
+    res.status(202).json({
+      message: 'Checkout realizado com sucesso! Processamento iniciado.',
+      list: updatedList,
+      status: 'accepted'
+    });
+
+  } catch (error) {
+    console.error('Error in checkout:', error);
+    res.status(500).json({ error: 'Erro ao finalizar compra' });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'healthy', service: 'list-service' });
 });
 
 // Inicializar servidor
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`List Service running on port ${PORT}`);
+  
+  // Conectar ao RabbitMQ
+  try {
+    await rabbitmq.connect();
+  } catch (error) {
+    console.error('⚠️ Falha ao conectar RabbitMQ. Continuando sem mensageria...');
+  }
   
   // Registrar no Service Registry
   serviceRegistry.register('list-service', `http://localhost:${PORT}`, {
@@ -352,8 +413,9 @@ app.listen(PORT, () => {
   });
 
   // Cleanup ao sair
-  process.on('SIGINT', () => {
+  process.on('SIGINT', async () => {
     serviceRegistry.unregister('list-service');
+    await rabbitmq.close();
     process.exit();
   });
 });
